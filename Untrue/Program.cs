@@ -19,6 +19,7 @@ using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Crypto.Digests;
 using System.Security.Cryptography;
 using Org.BouncyCastle.Crypto.Engines;
+using System.IO.MemoryMappedFiles;
 
 namespace Untrue
 {
@@ -880,7 +881,16 @@ namespace Untrue
                     Array.Copy(innerPlaintext, 0, plaintext, innerCount * 0x200, 0x200);
                 }
 
-                outputFile.Write(plaintext, 0, (int)(todoThisTime * 0x200));
+                if(outputFile == null)
+                {
+                    // Write results to the input file in-place.
+                    inputFile.Position -= bytesRead;
+                    inputFile.Write(plaintext, 0, bytesRead);
+                }
+                else
+                {
+                    outputFile.Write(plaintext, 0, (int)(todoThisTime * 0x200));
+                }
 
                 sectorsDone += todoThisTime;
                 Log(1, "Sectors done: " + sectorsDone + " out of " + sectorsToProcess);
@@ -911,6 +921,7 @@ namespace Untrue
             long volumeHeaderLocation = -1;
             string inputFilename = null;
             string outputFilename = null;
+            bool inPlace = false;
             long firstDecryptSector = -1;
             long firstSectorOffset = -1;
             long sectorsToProcess = -1;
@@ -949,6 +960,7 @@ namespace Untrue
                 { "key_file=", "File containing volume key", v => keyFilename = v},
                 { "i|input_file=", "Volume file for decryption", v => inputFilename = v},
                 { "o|output_file=", "Destination file for decrypted data", v => outputFilename = v},
+                { "inplace", "Writes results to input file in-place", v => inPlace = true},
                 { "e|encrypt", "Run in encryption direction instead", v => decryptDirection = false},
                 { "password_check_only", "Check password but don't decrypt volume", v => passwordCheckOnly = v != null},
                 { "volume_header_file=", "File containing volume header", v => volumeHeaderFilename = v},
@@ -1176,7 +1188,14 @@ namespace Untrue
                 {
                     try
                     {
-                        inputFile = File.Open(inputFilename, FileMode.Open, FileAccess.Read);
+                        if(inPlace)
+                        {
+                            inputFile = File.Open(inputFilename, FileMode.Open, FileAccess.ReadWrite);
+                        }
+                        else
+                        {
+                            inputFile = File.Open(inputFilename, FileMode.Open, FileAccess.Read);
+                        }
                     }
                     catch (IOException)
                     {
@@ -1184,16 +1203,23 @@ namespace Untrue
                     }
                 }
 
-                if (outputFilename == null)
+                if (!inPlace)
                 {
-                    UsageError("No output file specified (use --output_file)");
+                    if (outputFilename == null)
+                    {
+                        UsageError("No output file specified (use --output_file)");
+                    }
+                    else
+                    {
+                        if (File.Exists(outputFilename))
+                        {
+                            UsageError(String.Format("Output file {0} already exists, won't write to existing file.", outputFilename));
+                        }
+                    }
                 }
                 else
                 {
-                    if (File.Exists(outputFilename))
-                    {
-                        UsageError(String.Format("Output file {0} already exists, won't write to existing file.", outputFilename));
-                    }
+                    UsageWarning(String.Format("Writing changes to input file {0} in-place!", inputFilename));
                 }
 
                 if (!checkingPassword && firstDecryptSector == -1)  // if we *are* checking the password then default to obtaining first decrypt sector from decrypted volume header
@@ -1416,13 +1442,16 @@ namespace Untrue
                     }
                 }
 
-                try
+                if (!inPlace)
                 {
-                    outputFile = File.Open(outputFilename, FileMode.CreateNew, FileAccess.Write);
-                }
-                catch (IOException)
-                {
-                    UsageError(String.Format("Couldn't open output file {0} for writing", outputFilename));
+                    try
+                    {
+                        outputFile = File.Open(outputFilename, FileMode.CreateNew, FileAccess.Write);
+                    }
+                    catch (IOException)
+                    {
+                        UsageError(String.Format("Couldn't open output file {0} for writing", outputFilename));
+                    }
                 }
 
                 ProcessSectors(inputFile, outputFile, firstDecryptSector, firstSectorOffset, sectorsToProcess, volumeKey, encryptionAlgorithmForProcessing, decryptDirection);
